@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 
 #Pupil_ZMQ_ROS Publisher
 #ZMQ subscriber to receive gaze and world
@@ -40,7 +40,7 @@ def tupleToPoint(tup):
 
 #Pupil_ZMQ_ROS: a standalone class to interface Pupil ZMQ messages and ROS environment.
 class Pupil_ZMQ_ROS(object):
-    def __init__(self, addr='localhost', req_port='50010'): #Port can change
+    def __init__(self, addr='localhost', req_port='50020'): #Port can change
         #Initialize Pupil_ZMQ_ROS object, init ZMQ and ROS
         self.zmq_req = None
         self.zmq_sub = None
@@ -59,22 +59,22 @@ class Pupil_ZMQ_ROS(object):
         context = zmq.Context()
         self.zmq_req = context.socket(zmq.REQ)
         self.zmq_req.connect("tcp://%s:%s" %(addr,req_port))
-        
+
         # ask for the sub port
         self.zmq_req.send('SUB_PORT')
         sub_port = self.zmq_req.recv()
-        
-	# open a sub port to listen to pupil
+
+    # open a sub port to listen to pupil
         self.zmq_sub = context.socket(zmq.SUB)
         self.zmq_sub.connect("tcp://%s:%s" %(addr,sub_port))
-        
-	# set zmq subscriptions to topics
+
+    # set zmq subscriptions to topics
         self.zmq_sub.setsockopt(zmq.SUBSCRIBE, 'pupil.')
         self.zmq_sub.setsockopt(zmq.SUBSCRIBE, 'gaze')
         self.zmq_sub.setsockopt(zmq.SUBSCRIBE, 'frame')
-	self.zmq_sub.setsockopt(zmq.SUBSCRIBE, 'surface')
+        self.zmq_sub.setsockopt(zmq.SUBSCRIBE, 'surface')
         print 'Pupil_ZMQ_ROS: zmq environment initialized'
-    
+
     #Initialize ROS node, four publishers on four topics: gaze, pupil, world and surface
     def init_ros(self):
         try:
@@ -82,11 +82,11 @@ class Pupil_ZMQ_ROS(object):
             self.ros_gaze_publisher = rospy.Publisher('/pupil_capture/gaze', gaze_positions, queue_size=10)
             self.ros_pupil_publisher = rospy.Publisher('/pupil_capture/pupil', pupil_positions, queue_size=10)
             self.ros_world_img_publisher = rospy.Publisher('/pupil_capture/world', Image, queue_size=2)
-	    self.ros_surface_publisher = rospy.Publisher('/pupil_capture/surface', surface_position, queue_size=10)
+            self.ros_surface_publisher = rospy.Publisher('/pupil_capture/surface', surface_position, queue_size=10)
             self.ros_started = True
             self.seq = 0
             print 'Pupil_ZMQ_ROS: ros environment initialized'
-        
+
         #ROS except
         except rospy.ROSInterruptException as e:
             self.ros_started = False
@@ -98,38 +98,39 @@ class Pupil_ZMQ_ROS(object):
         if not self.ros_started:
             print 'Pupil_ZMQ_ROS: ros not started'
             return
-        
-        # rospy.is_shutdown check inside while loop to enable Ctrl-C termination    
+
+        # rospy.is_shutdown check inside while loop to enable Ctrl-C termination
         while True:
             if rospy.is_shutdown():
                 break
-                
+
             # receive message from ZMQ subscriber
             zmq_multipart =  self.zmq_sub.recv_multipart()
             zmq_topic, zmq_raw_msg = zmq_multipart[0], zmq_multipart[1]
-            
+
             # ROS header message
             header = Header()
             header.seq = self.seq
             header.stamp = rospy.get_rostime()
             header.frame_id = "Pupil_ZMQ_ROS"
-            zmq_msg = loads(zmq_raw_msg)
-            
+            #zmq_msg = loads(zmq_raw_msg)
+            zmq_msg = loads(zmq_raw_msg, strict_map_key=False)
+
             #Scan for topic name:surface
-	    if 'surface' in zmq_topic:
-		gaze_position = loads(zmq_raw_msg, encoding='utf-8')
-		gaze_on_screen = gaze_position['gaze_on_srf']
-		if len(gaze_on_screen) > 0:
-		    raw_x, raw_y = gaze_on_screen[-1]['norm_pos']
-		    on_srf = gaze_on_screen[0]['on_srf']
-		surface_info = surface_position()
-		surface_info.x = raw_x
-		surface_info.y = raw_y
-		surface_info.onsrf = on_srf
-		self.ros_surface_publisher.publish(surface_info)
-	    
-	    #Scan for topic name:pupil
-            if 'pupil' in zmq_topic:
+            if 'surface' in zmq_topic:
+                gaze_position = loads(zmq_raw_msg, encoding='utf-8')
+                gaze_on_screen = gaze_position['gaze_on_srf']
+                if len(gaze_on_screen) > 0:
+                    raw_x, raw_y = gaze_on_screen[-1]['norm_pos']
+                    on_srf = gaze_on_screen[0]['on_srf']
+                surface_info = surface_position()
+                surface_info.x = raw_x
+                surface_info.y = raw_y
+                surface_info.onsrf = on_srf
+                self.ros_surface_publisher.publish(surface_info)
+
+        #Scan for topic name:pupil
+            if 'pupil' == zmq_topic:
                 pupil_msg = pupil_positions()
                 pupil_msg.header = header
                 pupil_info_list = []
@@ -160,9 +161,10 @@ class Pupil_ZMQ_ROS(object):
                 pupil_info_list.append(pupil_info)
                 pupil_msg.pupils = pupil_info_list
                 self.ros_pupil_publisher.publish(pupil_msg)
-            
+
             #Gaze data after combining pupil data and gaze mapping plugin
-            if zmq_topic == 'gaze':
+            #if zmq_topic == 'gaze':
+            if 'gaze' in zmq_topic:
                 gaze_msg = gaze_positions()
                 gaze_info_list = []
                 gaze_info = gaze()
@@ -176,8 +178,8 @@ class Pupil_ZMQ_ROS(object):
                 gaze_msg.gazes = gaze_info_list
                 gaze_msg.header = header
                 self.ros_gaze_publisher.publish(gaze_msg)
-            
-            #Scan for topic name:frame.world    
+
+            #Scan for topic name:frame.world
             if 'frame.world' in zmq_topic:
                 if zmq_msg['format'] == 'bgr':
                     cv_img = np.frombuffer(zmq_multipart[2], dtype=np.uint8).reshape( zmq_msg['height'], zmq_msg['width'], 3)
@@ -199,7 +201,7 @@ if __name__ == "__main__":
     else:
         zmq_ros_pub = Pupil_ZMQ_ROS()
 
-    
+
     # Spinning on ZMQ messages, terminated by Ctrl-C
     zmq_ros_pub.spin()
 
